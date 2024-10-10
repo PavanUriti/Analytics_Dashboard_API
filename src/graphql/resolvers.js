@@ -1,0 +1,206 @@
+import defineUserModel from '../models/user.js';
+import { produceMessage } from '../../common/shared/utils/producer.kafka.js';
+import {getInfluxDBV2} from '../../common/startup/db.influx.v2.js';
+import pkg from 'mercurius';
+const { withFilter } = pkg;
+
+let User;
+
+const initializeModels = async () => {
+    User = defineUserModel();
+    return { User };
+};
+
+const resolvers = {
+    Query: {
+        users: async (_, __, { user }) => {
+            if (!user) {
+                throw new Error('Not authenticated');
+            }
+            try {
+                const users = await User.findAll();
+                return users;
+            } catch (error) {
+                throw new Error('Failed to fetch users: ' + error.message);
+            }
+        },
+        user: async (_, { id }, { user }) => {
+            if (!user) {
+                throw new Error('Not authenticated');
+            }
+            try {
+                const userRecord = await User.findByPk(id);
+                if (!userRecord) {
+                    throw new Error('User not found');
+                }
+                return userRecord;
+            } catch (error) {
+                throw new Error('Failed to fetch user: ' + error.message);
+            }
+        },
+        events: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, limit = 10, offset = 0 }) => {
+        try {
+            const influx = await getInfluxDBV2();
+            const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
+        
+            const query = `
+                from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                    |> filter(fn: (r) => r._measurement == "events"
+                        ${userId ? `and r.userId == "${userId}"` : ''}
+                        ${eventType ? `and r.eventType == "${eventType}"` : ''}
+                        ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
+                        ${elementId ? `and r.eventType == "${elementId}"` : ''}
+                        ${page ? `and r.deviceType == "${page}"` : ''}
+                    )
+                    |> sort(columns: ["_time"])
+                    |> limit(n: ${limit})
+            `;
+        
+            const events = [];
+        
+            return new Promise((resolve, reject) => {
+                queryApi.queryRows(query, {
+                    next(row, tableMeta) {
+                        const o = tableMeta.toObject(row);
+                        events.push({ eventType: o.eventType,
+                            deviceType: o.deviceType,
+                            elementId: o.elementId,
+                            page: o.page,
+                            userId: o.userId,
+                            details: JSON.parse(o._value),
+                            timestamp: o._time});
+                    },
+                    error(error) {
+                        console.error('Query error:', error);
+                        reject(new Error(`Failed to fetch events: ${error.message}`));
+                    },
+                    complete() {
+                        console.log('Query complete');
+                        resolve(events);
+                    },
+                });
+            });
+        } catch (error) {
+            console.error(`Failed to initialize InfluxDB client: ${error.message}`);
+            }
+        },
+    },
+    Subscription: {
+        eventAdded: {
+            subscribe: withFilter(
+                async (root, args, { pubsub }) => await pubsub.subscribe('EVENT_ADDED'),
+                (payload, { userId, eventType, deviceType, elementId, page, startTime, endTime }) => {
+                  const event = payload.eventAdded;
+        
+                  const timestampDate = new Date(event.timestamp);
+                  const isUserMatch = !userId || event.userId === userId;
+                  const isEventTypeMatch = !eventType || event.eventType === eventType;
+                  const isdeviceTypeMatch = !deviceType || event.deviceType === deviceType;
+                  const isElementIdMatch = !elementId || event.elementId === elementId;
+                  const ispageMatch = !page || event.page === page;
+                  const isStartTimeMatch = !startTime || timestampDate >= new Date(startTime);
+                  const isEndTimeMatch = !endTime || timestampDate <= new Date(endTime);
+        
+                  return isUserMatch && isEventTypeMatch && isdeviceTypeMatch && isElementIdMatch && ispageMatch && isStartTimeMatch && isEndTimeMatch;
+                }
+              ),
+            },
+      },
+    Mutation: {
+        createUser: async (_, { username, email, password, role }, { bcrypt }) => {
+            try {
+                const hashedPassword = await bcrypt.hash(password);
+                const newUser = await User.create({ username, email, password: hashedPassword, role });
+                return newUser;
+            } catch (error) {
+                throw new Error('Failed to create user: ' + error.message);
+            }
+        },
+        login: async (_, { username, password }, { bcrypt, request }) => {
+            const user = await User.findOne({ where: { username } });
+            if (!user) {
+                throw new Error('Invalid credentials');
+            }
+
+            const isValidPassword = await bcrypt.compare(password, user.password);
+            if (!isValidPassword) {
+                throw new Error('Invalid credentials');
+            }
+
+            request.logIn(user, (err) => {
+                if (err) {
+                    throw new Error('Failed to create session');
+                }
+            });
+
+            return {user}
+        },
+
+        logout: async (_, __, { request }) => {
+            if (!request.user) {
+                return false; 
+            }
+        
+            request.logout((err) => {
+                if (err) {
+                    throw new Error('Failed to create session');
+                }
+            });
+
+            return true;
+        },
+
+        updateUser: async (_, { id, username, email, password, role }, { bcrypt, user }) => {
+            if (!user) {
+                throw new Error('Not authenticated');
+            }
+            try {
+                const userRecord = await User.findByPk(id);
+                if (!userRecord) {
+                    throw new Error('User not found');
+                }
+
+                if (username) userRecord.username = username;
+                if (email) userRecord.email = email;
+                if (password) {
+                    userRecord.password = await bcrypt.hash(password);
+                }
+                if (role) userRecord.role = role;
+
+                await userRecord.save();
+                return userRecord;
+            } catch (error) {
+                throw new Error('Failed to update user: ' + error.message);
+            }
+        },
+        deleteUser: async (_, { id }, { user }) => {
+            if (!user) {
+                throw new Error('Not authenticated');
+            }
+            try {
+                const userRecord = await User.findByPk(id);
+                if (!userRecord) {
+                    throw new Error('User not found');
+                }
+
+                await userRecord.destroy();
+                return true;
+            } catch (error) {
+                throw new Error('Failed to delete user: ' + error.message);
+            }
+        },
+        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, details, value, timestamp }, { pubsub }) => {
+            await produceMessage({ eventType, deviceType, elementId, page, userId, details, value, timestamp });
+            await pubsub.publish({
+                topic: 'EVENT_ADDED',
+                payload: {
+                    eventAdded: { eventType, deviceType, elementId, page, userId, details, value, timestamp }
+                }
+            })
+            return `${eventType} Event produced for UserId ${userId}`;
+        },
+    },
+};
+
+export { resolvers, initializeModels };

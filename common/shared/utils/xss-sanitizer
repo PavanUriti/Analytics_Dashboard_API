@@ -1,0 +1,27 @@
+// utils/sanitize.js
+import { JSDOM } from 'jsdom';
+import DOMPurify from 'dompurify';
+
+const dompurify = DOMPurify(new JSDOM().window);
+
+/**
+ * Sanitize input data to prevent XSS attacks.
+ * @param {*} data - The data to sanitize.
+ * @returns {*} - The sanitized data.
+ */
+export function sanitize(data) {
+    const iterate = (obj) => {
+        Object.keys(obj).forEach((key) => {
+            if (typeof obj[key] === 'string') {
+                obj[key] = dompurify.sanitize(obj[key]);
+            } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+                iterate(obj[key]);
+            }
+        });
+    };
+
+    const dataCopy = JSON.parse(JSON.stringify(data));
+    iterate(dataCopy);
+    return dataCopy;
+}
+
