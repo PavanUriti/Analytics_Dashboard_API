@@ -28,6 +28,7 @@ const startServer = async () => {
     await app.register(fastifyCookie);
     await app.register(fastifySession, {
       secret: 'secret with minimum length of 32 characters',
+      maxAge: 900000,
       cookie: { secure: false },
     });
 

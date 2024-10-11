@@ -174,6 +174,60 @@ const resolvers = {
                 });
             });
         },
+        averageSessionDuration: async (_, { userId, startTime, endTime }) => {
+            const influx = await getInfluxDBV2();
+            const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
+        
+            const query = `
+                // Query for login events
+                data1 = from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                    |> filter(fn: (r) => r._measurement == "events" and r.eventType == "login"
+                        ${userId ? `and r.userId == "${userId}"` : ''})
+                    |> keep(columns: ["_time", "userId", "sessionId"])
+
+                // Query for logout events
+                data2 = from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                    |> filter(fn: (r) => r._measurement == "events" and r.eventType == "logout"
+                        ${userId ? `and r.userId == "${userId}"` : ''})
+                    |> keep(columns: ["_time", "userId", "sessionId"])
+
+                // Join the two datasets
+                join(
+                    tables: {login: data1, logout: data2},
+                    on: ["userId"],
+                    method: "inner"
+                )
+                |> map(fn: (r) => ({
+                    userId: r.userId,
+                    loginTime: r._time_login,
+                    logoutTime: r._time_logout
+                }))
+            `;
+
+            const sessionData = [];
+            return new Promise((resolve, reject) => {
+                queryApi.queryRows(query, {
+                    next(row, tableMeta) {
+                        const o = tableMeta.toObject(row);
+                        const duration = (new Date(o.logoutTime).getTime() - new Date(o.loginTime).getTime())/1000;
+                        sessionData.push({
+                            userId: o.userId,
+                            duration
+                        });
+                    },
+                    error(error) {
+                        console.error('Query error:', error);
+                        reject(new Error(`Failed to fetch average session duration: ${error.message}`));
+                    },
+                    complete() {
+                        console.log('Query complete');
+                        resolve(sessionData);
+                    },
+                });
+            });
+        },        
     },
     Subscription: {
         eventAdded: {
@@ -206,7 +260,8 @@ const resolvers = {
                 throw new Error('Failed to create user: ' + error.message);
             }
         },
-        login: async (_, { username, password }, { bcrypt, request }) => {
+        login: async (_, { username, password }, { bcrypt, request, pubsub }) => {
+
             const user = await User.findOne({ where: { username } });
             if (!user) {
                 throw new Error('Invalid credentials');
@@ -223,19 +278,38 @@ const resolvers = {
                 }
             });
 
+            const sessionId = request.session.sessionId;
+            await produceMessage({ eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()});
+            await pubsub.publish({
+                topic: 'EVENT_ADDED',
+                payload: {
+                    eventAdded: { eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()}
+                }
+            })
+
             return {user}
         },
 
-        logout: async (_, __, { request }) => {
+        logout: async (_, __, { request, pubsub }) => {
             if (!request.user) {
                 return false; 
             }
-        
+            const userId = request.user.dataValues.id;
+            const sessionId = request.session.sessionId;
+
             request.logout((err) => {
                 if (err) {
                     throw new Error('Failed to create session');
                 }
             });
+
+            await produceMessage({ eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()});
+            await pubsub.publish({
+                topic: 'EVENT_ADDED',
+                payload: {
+                    eventAdded: { eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()}
+                }
+            })
 
             return true;
         },
@@ -279,12 +353,17 @@ const resolvers = {
                 throw new Error('Failed to delete user: ' + error.message);
             }
         },
-        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, value, timestamp }, { pubsub }) => {
-            await produceMessage({ eventType, deviceType, elementId, page, userId, value, timestamp });
+        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, value, timestamp }, { request, user, pubsub }) => {
+            if (!user) {
+                throw new Error('Not authenticated');
+            }
+            const sessionId = request.session.sessionId;
+
+            await produceMessage({ eventType, deviceType, elementId, page, userId: user.id, sessionId, value, timestamp });
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType, deviceType, elementId, page, userId, value, timestamp }
+                    eventAdded: { eventType, deviceType, elementId, page, userId: user.id, sessionId, value, timestamp }
                 }
             })
             return `${eventType} Event produced for UserId ${userId}`;

@@ -33,6 +33,11 @@ const schema = `
     timestamp: String
   }
 
+  type AverageSessionDuration {
+    userId: ID!
+    duration: Float!
+  }
+
   type Query {
     users: [User]
     user(id: ID!): User
@@ -69,6 +74,11 @@ const schema = `
       every: String!,
       groupBy: String!
     ): [EventAggregation]
+    averageSessionDuration(
+      userId: ID,
+      startTime: String,
+      endTime: String,
+    ): [AverageSessionDuration]
   }
 
   type Subscription {
