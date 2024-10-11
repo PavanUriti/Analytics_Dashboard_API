@@ -50,8 +50,8 @@ const resolvers = {
                         ${userId ? `and r.userId == "${userId}"` : ''}
                         ${eventType ? `and r.eventType == "${eventType}"` : ''}
                         ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
-                        ${elementId ? `and r.eventType == "${elementId}"` : ''}
-                        ${page ? `and r.deviceType == "${page}"` : ''}
+                        ${elementId ? `and r.elementId == "${elementId}"` : ''}
+                        ${page ? `and r.page == "${page}"` : ''}
                     )
                     |> sort(columns: ["_time"])
                     |> limit(n: ${limit})
@@ -68,7 +68,7 @@ const resolvers = {
                             elementId: o.elementId,
                             page: o.page,
                             userId: o.userId,
-                            details: JSON.parse(o._value),
+                            value: o._value,
                             timestamp: o._time});
                     },
                     error(error) {
@@ -84,6 +84,95 @@ const resolvers = {
         } catch (error) {
             console.error(`Failed to initialize InfluxDB client: ${error.message}`);
             }
+        },
+        getEventDistribution: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, groupBy}) => {
+            const influx = await getInfluxDBV2();
+            const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
+
+            const validGroupByFields = ["deviceType", "eventType", "userId", "elementId", "page"];
+            const groupColumn = validGroupByFields.includes(groupBy) ? `"${groupBy}"` : '"deviceType"';
+
+            const query = `
+                from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                    |> filter(fn: (r) => r._measurement == "events"
+                        ${userId ? `and r.userId == "${userId}"` : ''}
+                        ${eventType ? `and r.eventType == "${eventType}"` : ''}
+                        ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
+                        ${elementId ? `and r.elementId == "${elementId}"` : ''}
+                        ${page ? `and r.page == "${page}"` : ''}
+                    )
+                    |> group(columns: [${groupColumn}])
+                    |> count()
+            `;
+
+            const distribution = [];
+            return new Promise((resolve, reject) => {
+                queryApi.queryRows(query, {
+                    next(row, tableMeta) {
+                        const o = tableMeta.toObject(row);
+                        console.log(o)
+                        distribution.push({key: o[groupBy || 'deviceType'], count: o._value });
+                    },
+                    error(error) {
+                        console.error('Query error:', error);
+                        reject(new Error(`Failed to fetch events: ${error.message}`));
+                        },
+                    complete() {
+                        console.log('Query complete');
+                        resolve(distribution);
+                    },
+                });
+            });
+        },
+        aggregateEvents: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, groupBy, aggregationFunction, every}) => {
+            const influx = await getInfluxDBV2();
+            const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
+        
+            const validGroupByFields = ["deviceType", "eventType", "userId", "elementId", "page"];
+            const groupColumn = validGroupByFields.includes(groupBy) ? `"${groupBy}"` : '"eventType"';
+
+            let aggregationQuery;
+            if (aggregationFunction === 'unique') {
+                aggregationQuery = `
+                    |> aggregateWindow(every: 5m, fn: (tables=<-,column="userId") => tables |> unique(column: "userId"), createEmpty: false)
+                `;
+            } else {
+                aggregationQuery = `
+                    |> aggregateWindow(every: ${every}, fn: ${aggregationFunction}, createEmpty: false)
+                `;
+            }
+
+            const query = `
+                from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                    |> filter(fn: (r) => r._measurement == "events"
+                        ${userId ? `and r.userId == "${userId}"` : ''}
+                        ${eventType ? `and r.eventType == "${eventType}"` : ''}
+                        ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
+                        ${elementId ? `and r.elementId == "${elementId}"` : ''}
+                        ${page ? `and r.page == "${page}"` : ''}
+                    )
+                    |> group(columns: [${groupColumn}])
+                    ${aggregationQuery}
+            `;
+            const distribution = [];
+            return new Promise((resolve, reject) => {
+                queryApi.queryRows(query, {
+                    next(row, tableMeta) {
+                        const o = tableMeta.toObject(row);
+                        distribution.push({key: o[groupBy] || o.eventType, count: o._value, timestamp: o._time });
+                    },
+                    error(error) {
+                        console.error('Query error:', error);
+                        reject(new Error(`Failed to fetch events: ${error.message}`));
+                    },
+                    complete() {
+                        console.log('Query complete');
+                        resolve(distribution);
+                    },
+                });
+            });
         },
     },
     Subscription: {
@@ -106,7 +195,7 @@ const resolvers = {
                 }
               ),
             },
-      },
+    },
     Mutation: {
         createUser: async (_, { username, email, password, role }, { bcrypt }) => {
             try {
@@ -190,12 +279,12 @@ const resolvers = {
                 throw new Error('Failed to delete user: ' + error.message);
             }
         },
-        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, details, value, timestamp }, { pubsub }) => {
-            await produceMessage({ eventType, deviceType, elementId, page, userId, details, value, timestamp });
+        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, value, timestamp }, { pubsub }) => {
+            await produceMessage({ eventType, deviceType, elementId, page, userId, value, timestamp });
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType, deviceType, elementId, page, userId, details, value, timestamp }
+                    eventAdded: { eventType, deviceType, elementId, page, userId, value, timestamp }
                 }
             })
             return `${eventType} Event produced for UserId ${userId}`;

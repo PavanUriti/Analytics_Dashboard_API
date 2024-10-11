@@ -11,10 +11,6 @@ const schema = `
   type AuthPayload {
     user: User
   }
-
-  input Details {
-    description: String
-  }
   
   type Event {
     eventType: String!
@@ -23,8 +19,18 @@ const schema = `
     page: String!
     userId: ID!
     timestamp: String!
-    details: JSON
     value: Float!
+  }
+
+  type EventDistribution {
+    key: String!
+    count: Int!
+  }
+  
+  type EventAggregation {
+    key: String
+    count: Int!
+    timestamp: String
   }
 
   type Query {
@@ -41,6 +47,28 @@ const schema = `
       limit: Int,
       offset: Int
     ): [Event]
+    getEventDistribution(
+      userId: ID,
+      eventType: String,
+      deviceType: String,
+      elementId: String,
+      page: String,
+      startTime: String,
+      endTime: String,
+      groupBy: String
+    ): [EventDistribution]
+    aggregateEvents(
+      userId: ID,
+      eventType: String,
+      deviceType: String,
+      elementId: String,
+      page: String,
+      startTime: String!,
+      endTime: String!,
+      aggregationFunction: String!,
+      every: String!,
+      groupBy: String!
+    ): [EventAggregation]
   }
 
   type Subscription {
@@ -61,7 +89,7 @@ const schema = `
     logout: Boolean
     updateUser(id: ID!, username: String, email: String, password: String, role: String): User
     deleteUser(id: ID!): Boolean
-    produceEvent(eventType: String!, deviceType: String!, elementId: String!, page: String!, userId: ID!, details: Details, value: Float!, timestamp: String!): String
+    produceEvent(eventType: String!, deviceType: String!, elementId: String!, page: String!, userId: ID!, value: Float!, timestamp: String!): String
   }
 `;
 

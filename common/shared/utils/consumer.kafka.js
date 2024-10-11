@@ -23,7 +23,7 @@ const consumeMessage = async (app) => {
                                     .setTag('deviceType', data.deviceType)
                                     .setTag('elementId', data.elementId)
                                     .setTag('page', data.page) 
-                                    .setStringField('details', JSON.stringify(data.details))
+                                    .setFloatField('value', parseFloat(data.value))
                                     .setTimestamp(new Date(data.timestamp).getTime() * 1000000)
 
                     await influx.write(point, process.env.INFLUXDB_BUCKET, process.env.INFLUXDB_ORG)
