@@ -54,7 +54,7 @@ const resolvers = {
                         ${page ? `and r.page == "${page}"` : ''}
                     )
                     |> sort(columns: ["_time"])
-                    |> limit(n: ${limit})
+                    |> limit(n: ${limit}, offset: ${offset})
             `;
         
             const events = [];
@@ -111,7 +111,6 @@ const resolvers = {
                 queryApi.queryRows(query, {
                     next(row, tableMeta) {
                         const o = tableMeta.toObject(row);
-                        console.log(o)
                         distribution.push({key: o[groupBy || 'deviceType'], count: o._value });
                     },
                     error(error) {
