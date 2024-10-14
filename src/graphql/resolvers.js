@@ -3,6 +3,7 @@ import { produceMessage } from '../../common/shared/utils/producer.kafka.js';
 import {getInfluxDBV2} from '../../common/startup/db.influx.v2.js';
 import pkg from 'mercurius';
 const { withFilter } = pkg;
+import { v4 as uuidv4 } from 'uuid';
 
 let User;
 
@@ -38,7 +39,7 @@ const resolvers = {
                 throw new Error('Failed to fetch user: ' + error.message);
             }
         },
-        events: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, limit = 10, offset = 0 }) => {
+        events: async (_, { eventId, userId, eventType, deviceType, elementId, page, startTime, endTime, limit = 10, offset = 0 }) => {
             try {
                 const influx = await getInfluxDBV2();
                 const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
@@ -47,6 +48,7 @@ const resolvers = {
                     from(bucket: "${process.env.INFLUXDB_BUCKET}")
                         |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
                         |> filter(fn: (r) => r._measurement == "events"
+                            ${eventId ? `and r.eventId == "${eventId}"` : ''}
                             ${userId ? `and r.userId == "${userId}"` : ''}
                             ${eventType ? `and r.eventType == "${eventType}"` : ''}
                             ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
@@ -61,6 +63,7 @@ const resolvers = {
                     from(bucket: "${process.env.INFLUXDB_BUCKET}")
                         |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
                         |> filter(fn: (r) => r._measurement == "events"
+                            ${eventId ? `and r.eventId == "${eventId}"` : ''}
                             ${userId ? `and r.userId == "${userId}"` : ''}
                             ${eventType ? `and r.eventType == "${eventType}"` : ''}
                             ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
@@ -94,6 +97,7 @@ const resolvers = {
                             edges.push({
                                 cursor: o._time,
                                 node: {
+                                    eventId: o.eventId,
                                     eventType: o.eventType,
                                     deviceType: o.deviceType,
                                     elementId: o.elementId,
@@ -327,11 +331,12 @@ const resolvers = {
             });
 
             const sessionId = request.session.sessionId;
-            await produceMessage({ eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()});
+            const eventId = uuidv4();
+            await produceMessage({ eventId, eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()});
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()}
+                    eventAdded: { eventId, eventType: 'login', deviceType: request.headers['user-agent'], elementId: 'button-0', page: request.originalUrl, userId: user.id, sessionId, value: 1.0, timestamp: new Date().toISOString()}
                 }
             })
 
@@ -350,12 +355,12 @@ const resolvers = {
                     throw new Error('Failed to create session');
                 }
             });
-
-            await produceMessage({ eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()});
+            const eventId = uuidv4();
+            await produceMessage({ eventId, eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()});
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()}
+                    eventAdded: { eventId, eventType: 'logout', deviceType: request.headers['user-agent'], elementId: 'button-1', page: request.originalUrl, userId, sessionId, value: 1.0, timestamp: new Date().toISOString()}
                 }
             })
 
@@ -411,10 +416,11 @@ const resolvers = {
             if (!input) {
                 throw new Error('Input is required');
             }
-        
+            const eventId = uuidv4();
             const { eventType, deviceType, elementId, page, userId, value, timestamp } = input;
         
             await produceMessage({
+                eventId,
                 eventType,
                 deviceType,
                 elementId,
@@ -428,10 +434,10 @@ const resolvers = {
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType, deviceType, elementId, page, userId: userId || user.id, sessionId, value, timestamp }
+                    eventAdded: { eventId, eventType, deviceType, elementId, page, userId: userId || user.id, sessionId, value, timestamp }
                 }
             })
-
+            
             return `${eventType} Event produced for UserId ${userId}`;
         },
     },

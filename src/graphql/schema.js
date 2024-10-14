@@ -13,6 +13,7 @@ const schema = `
   }
 
   type Event {
+    eventId: ID!
     eventType: String!
     deviceType: String!
     elementId: String! 
@@ -66,6 +67,7 @@ const schema = `
     users: [User]
     user(id: ID!): User
     events(
+      eventId: ID,
       userId: ID,
       eventType: String,
       deviceType: String,
@@ -107,6 +109,7 @@ const schema = `
 
   type Subscription {
     eventAdded(
+      eventId: ID,
       userId: ID, 
       eventType: String,
       deviceType: String,
@@ -115,13 +118,6 @@ const schema = `
       startTime: String,
       endTime: String,
     ): Event
-    eventAggregated(
-      userId: ID,
-      eventType: String,
-      deviceType: String,
-      elementId: String,
-      page: String,
-    ): EventAggregation
   }
 
   input ProduceEventInput {
@@ -141,7 +137,6 @@ const schema = `
     updateUser(id: ID!, username: String, email: String, password: String, role: String): User
     deleteUser(id: ID!): Boolean
     produceEvent(input: ProduceEventInput!): String
-    deleteEvent(id: ID!): Boolean
   }
 
 `;

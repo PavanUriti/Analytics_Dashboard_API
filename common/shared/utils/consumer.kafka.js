@@ -19,6 +19,7 @@ const consumeMessage = async (app) => {
 
                     const point = Point.measurement('events')
                                     .setTag('eventType', data.eventType)
+                                    .setTag('eventId', data.eventId)
                                     .setTag('userId', data.userId)
                                     .setTag('sessionId', data.sessionId)
                                     .setTag('deviceType', data.deviceType)
