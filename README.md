@@ -22,7 +22,7 @@ A real-time analytics dashboard built with Fastify, PostgreSQL, InfluxDB, Kafka,
 ![Architecture Diagram](path/to/architecture-diagram.png)
 
 Architecture
-The architecture of the Real-Time Analytics Dashboard integrates multiple technologies to provide efficient data capture, processing, and visualization. Below is a high-level overview of the architecture:
+- The architecture of the Real-Time Analytics Dashboard integrates multiple technologies to provide efficient data capture, processing, and visualization. Below is a high-level overview of the architecture:
 
 
 Components
