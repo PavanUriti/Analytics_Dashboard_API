@@ -1,6 +1,6 @@
 # # Real-Time Analytics Dashboard API
 
-A real-time analytics dashboard built with Fastify, PostgreSQL, InfluxDB, Kafka, and Mercurius. This project showcases how to capture, process, and visualize event data in real time.
+A real-time analytics dashboard built with Fastify, PostgreSQL, InfluxDB, Kafka, and Mercurius. This project showcases how to capture, process, and visualize user click events in real time. It leverages Mercurius for GraphQL, enabling efficient data querying and real-time updates.
 
 ## Table of Contents
 
@@ -10,10 +10,11 @@ A real-time analytics dashboard built with Fastify, PostgreSQL, InfluxDB, Kafka,
 
 ## Features
 
+- Capture and analyze user click events to gain insights into user interactions
 - Real-time event ingestion and processing using Kafka
-- Time-series event data storage in InfluxDB
+- Time-series click event data storage in InfluxDB
 - User management with PostgreSQL
-- Real-time updates using Mercurius
+- Use Mercurius to provide a robust GraphQL API for querying event data
 - Fast and efficient API built with Fastify
 
 ## Architecture
