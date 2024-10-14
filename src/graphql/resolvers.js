@@ -39,50 +39,96 @@ const resolvers = {
             }
         },
         events: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, limit = 10, offset = 0 }) => {
-        try {
-            const influx = await getInfluxDBV2();
-            const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
-        
-            const query = `
-                from(bucket: "${process.env.INFLUXDB_BUCKET}")
-                    |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
-                    |> filter(fn: (r) => r._measurement == "events"
-                        ${userId ? `and r.userId == "${userId}"` : ''}
-                        ${eventType ? `and r.eventType == "${eventType}"` : ''}
-                        ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
-                        ${elementId ? `and r.elementId == "${elementId}"` : ''}
-                        ${page ? `and r.page == "${page}"` : ''}
-                    )
-                    |> sort(columns: ["_time"])
-                    |> limit(n: ${limit}, offset: ${offset})
-            `;
-        
-            const events = [];
-        
-            return new Promise((resolve, reject) => {
-                queryApi.queryRows(query, {
+            try {
+                const influx = await getInfluxDBV2();
+                const queryApi = influx.getQueryApi(process.env.INFLUXDB_ORG);
+                
+                const query = `
+                    from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                        |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                        |> filter(fn: (r) => r._measurement == "events"
+                            ${userId ? `and r.userId == "${userId}"` : ''}
+                            ${eventType ? `and r.eventType == "${eventType}"` : ''}
+                            ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
+                            ${elementId ? `and r.elementId == "${elementId}"` : ''}
+                            ${page ? `and r.page == "${page}"` : ''}
+                        )
+                        |> sort(columns: ["_time"])
+                        |> limit(n: ${limit}, offset: ${offset})
+                `;
+
+                const countQuery = `
+                    from(bucket: "${process.env.INFLUXDB_BUCKET}")
+                        |> range(start: ${startTime || '-1h'}, stop: ${endTime || 'now()'})
+                        |> filter(fn: (r) => r._measurement == "events"
+                            ${userId ? `and r.userId == "${userId}"` : ''}
+                            ${eventType ? `and r.eventType == "${eventType}"` : ''}
+                            ${deviceType ? `and r.deviceType == "${deviceType}"` : ''}
+                            ${elementId ? `and r.elementId == "${elementId}"` : ''}
+                            ${page ? `and r.page == "${page}"` : ''}
+                        )
+                        |> count()
+                `;
+
+                let totalCount = 0;
+                await queryApi.queryRows(countQuery, {
                     next(row, tableMeta) {
                         const o = tableMeta.toObject(row);
-                        events.push({ eventType: o.eventType,
-                            deviceType: o.deviceType,
-                            elementId: o.elementId,
-                            page: o.page,
-                            userId: o.userId,
-                            value: o._value,
-                            timestamp: o._time});
+                        totalCount = o._value;
                     },
                     error(error) {
-                        console.error('Query error:', error);
+                        console.error('Count query error:', error);
                         reject(new Error(`Failed to fetch events: ${error.message}`));
                     },
                     complete() {
-                        console.log('Query complete');
-                        resolve(events);
+                        console.log('Count query complete');
                     },
                 });
-            });
-        } catch (error) {
-            console.error(`Failed to initialize InfluxDB client: ${error.message}`);
+                
+                const edges = [];
+                
+                return new Promise((resolve, reject) => {
+                    queryApi.queryRows(query, {
+                        next(row, tableMeta) {
+                            const o = tableMeta.toObject(row);
+                            edges.push({
+                                cursor: o._time,
+                                node: {
+                                    eventType: o.eventType,
+                                    deviceType: o.deviceType,
+                                    elementId: o.elementId,
+                                    page: o.page,
+                                    userId: o.userId,
+                                    value: o._value,
+                                    timestamp: o._time,
+                                }
+                            });
+                        },
+                        error(error) {
+                            console.error('Query error:', error);
+                            reject(new Error(`Failed to fetch events: ${error.message}`));
+                        },
+                        complete() {
+                            console.log('Query complete');
+                            resolve({
+                                __typename: "EventConnection",
+                                edges,
+                                pageInfo: {
+                                    hasNextPage: offset + limit < totalCount,
+                                    hasPreviousPage: offset > 0,
+                                    startCursor: edges.length > 0 ? edges[0].cursor : null,
+                                    endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+                                },
+                            });
+                        },
+                    });
+                });
+            } catch (error) {
+                return {
+                    __typename: "Error",
+                    message: `Failed to fetch events: ${error.message}`,
+                    code: 500,
+                };;
             }
         },
         getEventDistribution: async (_, { userId, eventType, deviceType, elementId, page, startTime, endTime, groupBy}) => {
@@ -233,20 +279,23 @@ const resolvers = {
             subscribe: withFilter(
                 async (root, args, { pubsub }) => await pubsub.subscribe('EVENT_ADDED'),
                 (payload, { userId, eventType, deviceType, elementId, page, startTime, endTime }) => {
-                  const event = payload.eventAdded;
-        
-                  const timestampDate = new Date(event.timestamp);
-                  const isUserMatch = !userId || event.userId === userId;
-                  const isEventTypeMatch = !eventType || event.eventType === eventType;
-                  const isdeviceTypeMatch = !deviceType || event.deviceType === deviceType;
-                  const isElementIdMatch = !elementId || event.elementId === elementId;
-                  const ispageMatch = !page || event.page === page;
-                  const isStartTimeMatch = !startTime || timestampDate >= new Date(startTime);
-                  const isEndTimeMatch = !endTime || timestampDate <= new Date(endTime);
-        
-                  return isUserMatch && isEventTypeMatch && isdeviceTypeMatch && isElementIdMatch && ispageMatch && isStartTimeMatch && isEndTimeMatch;
+                    const event = payload.eventAdded;
+                    if (!event) {
+                        return false; 
+                    }
+    
+                    const timestampDate = new Date(event.timestamp);
+                    const isUserMatch = !userId || event.userId === userId;
+                    const isEventTypeMatch = !eventType || event.eventType === eventType;
+                    const isDeviceTypeMatch = !deviceType || event.deviceType === deviceType;
+                    const isElementIdMatch = !elementId || event.elementId === elementId;
+                    const isPageMatch = !page || event.page === page;
+                    const isStartTimeMatch = !startTime || timestampDate >= new Date(startTime);
+                    const isEndTimeMatch = !endTime || timestampDate <= new Date(endTime);
+    
+                    return isUserMatch && isEventTypeMatch && isDeviceTypeMatch && isElementIdMatch && isPageMatch && isStartTimeMatch && isEndTimeMatch;
                 }
-              ),
+            ),
             },
     },
     Mutation: {
@@ -352,19 +401,37 @@ const resolvers = {
                 throw new Error('Failed to delete user: ' + error.message);
             }
         },
-        produceEvent: async (_, { eventType, deviceType, elementId, page, userId, value, timestamp }, { request, user, pubsub }) => {
+        produceEvent: async (_, { input }, { request, user, pubsub }) => {
             if (!user) {
                 throw new Error('Not authenticated');
             }
+            
             const sessionId = request.session.sessionId;
 
-            await produceMessage({ eventType, deviceType, elementId, page, userId: user.id, sessionId, value, timestamp });
+            if (!input) {
+                throw new Error('Input is required');
+            }
+        
+            const { eventType, deviceType, elementId, page, userId, value, timestamp } = input;
+        
+            await produceMessage({
+                eventType,
+                deviceType,
+                elementId,
+                page,
+                userId: userId || user.id,
+                sessionId,
+                value,
+                timestamp
+            });
+
             await pubsub.publish({
                 topic: 'EVENT_ADDED',
                 payload: {
-                    eventAdded: { eventType, deviceType, elementId, page, userId: user.id, sessionId, value, timestamp }
+                    eventAdded: { eventType, deviceType, elementId, page, userId: userId || user.id, sessionId, value, timestamp }
                 }
             })
+
             return `${eventType} Event produced for UserId ${userId}`;
         },
     },
