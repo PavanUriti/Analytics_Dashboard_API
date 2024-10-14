@@ -7,11 +7,11 @@ const schema = `
     email: String!
     role: String!
   }
-  
+
   type AuthPayload {
     user: User
   }
-  
+
   type Event {
     eventType: String!
     deviceType: String!
@@ -26,7 +26,7 @@ const schema = `
     key: String!
     count: Int!
   }
-  
+
   type EventAggregation {
     key: String
     count: Int!
@@ -37,6 +37,30 @@ const schema = `
     userId: ID!
     duration: Float!
   }
+
+  type PageInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+    endCursor: String
+  }
+
+  type EventConnection {
+    edges: [EventEdge]
+    pageInfo: PageInfo
+  }
+
+  type EventEdge {
+    cursor: String!
+    node: Event!
+  }
+
+  type Error {
+    message: String!
+    code: Int!
+  }
+
+  union EventResult = EventConnection | Error
 
   type Query {
     users: [User]
@@ -51,7 +75,7 @@ const schema = `
       endTime: String,
       limit: Int,
       offset: Int
-    ): [Event]
+    ): EventResult
     getEventDistribution(
       userId: ID,
       eventType: String,
@@ -91,6 +115,23 @@ const schema = `
       startTime: String,
       endTime: String,
     ): Event
+    eventAggregated(
+      userId: ID,
+      eventType: String,
+      deviceType: String,
+      elementId: String,
+      page: String,
+    ): EventAggregation
+  }
+
+  input ProduceEventInput {
+    eventType: String!
+    deviceType: String!
+    elementId: String!
+    page: String!
+    userId: ID!
+    value: Float!
+    timestamp: String!
   }
 
   type Mutation {
@@ -99,9 +140,10 @@ const schema = `
     logout: Boolean
     updateUser(id: ID!, username: String, email: String, password: String, role: String): User
     deleteUser(id: ID!): Boolean
-    produceEvent(eventType: String!, deviceType: String!, elementId: String!, page: String!, userId: ID!, value: Float!, timestamp: String!): String
+    produceEvent(input: ProduceEventInput!): String
+    deleteEvent(id: ID!): Boolean
   }
+
 `;
 
 export default schema;
-
