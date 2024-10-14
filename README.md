@@ -21,11 +21,21 @@ A real-time analytics dashboard built with Fastify, PostgreSQL, InfluxDB, Kafka,
 
 ![Architecture Diagram](path/to/architecture-diagram.png)
 
-1. **Fastify**: Serves as the API layer and handles requests.
-2. **PostgreSQL**: Stores structured user data.
-3. **InfluxDB**: Stores time-series event data for efficient querying.
-4. **Kafka**: Acts as a messaging system for event streaming.
-5. **Mercurius**: Provides real-time updates to clients.
+Architecture
+The architecture of the Real-Time Analytics Dashboard integrates multiple technologies to provide efficient data capture, processing, and visualization. Below is a high-level overview of the architecture:
+
+
+Components
+1. Fastify: Serves as the API layer, handling HTTP requests and providing a GraphQL interface via Mercurius.
+2. PostgreSQL: Stores structured user enabling relational queries.
+3. InfluxDB: Specialized for storing time-series data, allowing for quick retrieval and analysis of user click events.
+4. Kafka: Acts as a message broker, facilitating the streaming of user click events between services.
+5. Mercurius: Provides a GraphQL API that enables clients to query event data and receive real-time updates.
+
+Data Flow
+- User click events are captured and sent to Kafka.
+- Fastify listens for events from Kafka, processes them, and stores the relevant data in both PostgreSQL and InfluxDB.
+- Clients can query the data using GraphQL through Mercurius and receive real-time updates when new events are processed.
 
 ## Technologies Used
 
